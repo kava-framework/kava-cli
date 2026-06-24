@@ -18,7 +18,7 @@ export const extensions = {
 } as const;
 
 export const extensionNames = Object.keys(extensions);
-export const frontendExtensions = ["idb", "socket", "document"];
+export const frontendExtensions = ["idb", "socket", "document", "pwa", "tauri-desktop", "tauri-mobile"];
 
 export async function addExtension(extensionName: string): Promise<void> {
   const projectRoot = findProjectRoot(process.cwd());
@@ -83,6 +83,71 @@ export async function addExtension(extensionName: string): Promise<void> {
           content += `\nexport * from "@skalfa/skalfa-document";\n`;
           fs.writeFileSync(baseComponentsIndexPath, content, "utf8");
         }
+      }
+    } else if (extensionName === "pwa") {
+      console.log("Installing Skalfa PWA extension...");
+      installPackage(projectRoot, "@ducanh2912/next-pwa");
+
+      // Copy manifest.ts from template if it doesn't exist
+      const manifestPath = path.join(projectRoot, "app", "manifest.ts");
+      if (!fs.existsSync(manifestPath)) {
+        console.log("Scaffolding PWA manifest file...");
+        const { templateSource, cleanup } = await getAppTemplateSource(projectRoot);
+        try {
+          const manifestSrc = path.join(templateSource, "app", "manifest.ts");
+          if (exists(manifestSrc)) {
+            fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+            fs.copyFileSync(manifestSrc, manifestPath);
+          }
+        } finally {
+          cleanup();
+        }
+      }
+
+      // Wrap next.config.ts with withPWA
+      const nextConfigPath = path.join(projectRoot, "next.config.ts");
+      if (fs.existsSync(nextConfigPath)) {
+        let content = fs.readFileSync(nextConfigPath, "utf8");
+        if (!content.includes("@ducanh2912/next-pwa")) {
+          content = `import withPWAInit from "@ducanh2912/next-pwa";\n` + content;
+          content = content.replace(
+            /export default nextConfig;/,
+            `const withPWA = withPWAInit({\n  dest: "public",\n  disable: process.env.NODE_ENV === "development",\n});\n\nexport default withPWA(nextConfig);`
+          );
+          fs.writeFileSync(nextConfigPath, content, "utf8");
+        }
+      }
+    } else if (extensionName === "tauri-desktop" || extensionName === "tauri-mobile") {
+      console.log(`Installing Skalfa ${extensionName === "tauri-desktop" ? "Tauri Desktop" : "Tauri Mobile"} extension...`);
+      installPackage(projectRoot, "@tauri-apps/api");
+      installPackage(projectRoot, "@tauri-apps/cli", true); // devDependency
+      installPackage(projectRoot, "cross-env", true);       // devDependency
+
+      // Copy src-tauri folder
+      console.log("Scaffolding Tauri configuration...");
+      const tauriDest = path.join(projectRoot, "src-tauri");
+      if (!fs.existsSync(tauriDest)) {
+        const { templateSource, cleanup } = await getAppTemplateSource(projectRoot);
+        try {
+          const tauriSrc = path.join(templateSource, "src-tauri");
+          if (exists(tauriSrc)) {
+            copyTemplate(tauriSrc, tauriDest);
+          }
+        } finally {
+          cleanup();
+        }
+      }
+
+      // Add scripts to package.json
+      if (fs.existsSync(packageJsonPath)) {
+        const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+        pkg.scripts = pkg.scripts || {};
+        pkg.scripts["tauri"] = "cross-env IS_TAURI=true tauri";
+        if (extensionName === "tauri-mobile") {
+          pkg.scripts["tauri:android"] = "cross-env IS_TAURI=true tauri android";
+          pkg.scripts["tauri:ios"] = "cross-env IS_TAURI=true tauri ios";
+        }
+        fs.writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2), "utf8");
       }
     }
 

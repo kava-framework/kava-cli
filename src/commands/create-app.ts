@@ -54,11 +54,17 @@ export async function createApp(projectName: string): Promise<void> {
   let hasIdb = false;
   let hasSocket = false;
   let hasDocument = false;
+  let hasPwa = false;
+  let hasTauriDesktop = false;
+  let hasTauriMobile = false;
 
   try {
     hasIdb = (await q.ask("Do you need IndexedDB (IDB)? (y/N): ")).toLowerCase().startsWith("y");
     hasSocket = (await q.ask("Do you need Socket.io Client? (y/N): ")).toLowerCase().startsWith("y");
     hasDocument = (await q.ask("Do you need Document Export/Viewer (PDF/Excel)? (y/N): ")).toLowerCase().startsWith("y");
+    hasPwa = (await q.ask("Do you want to enable Progressive Web App (PWA)? (y/N): ")).toLowerCase().startsWith("y");
+    hasTauriDesktop = (await q.ask("Do you want to enable Tauri Desktop support (Windows/macOS/Linux)? (y/N): ")).toLowerCase().startsWith("y");
+    hasTauriMobile = (await q.ask("Do you want to enable Tauri Mobile support (Android/iOS)? (y/N): ")).toLowerCase().startsWith("y");
   } finally {
     q.close();
   }
@@ -124,7 +130,10 @@ export async function createApp(projectName: string): Promise<void> {
   customizeProject(target, {
     idb: hasIdb,
     socket: hasSocket,
-    document: hasDocument
+    document: hasDocument,
+    pwa: hasPwa,
+    tauriDesktop: hasTauriDesktop,
+    tauriMobile: hasTauriMobile
   });
   
   console.log("Installing dependencies...");
@@ -152,6 +161,9 @@ interface CustomizationOptions {
   idb: boolean;
   socket: boolean;
   document: boolean;
+  pwa: boolean;
+  tauriDesktop: boolean;
+  tauriMobile: boolean;
 }
 
 function customizeProject(target: string, opts: CustomizationOptions): void {
@@ -163,6 +175,8 @@ function customizeProject(target: string, opts: CustomizationOptions): void {
   if (fs.existsSync(packageJsonPath)) {
     const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
     pkg.dependencies = pkg.dependencies || {};
+    pkg.devDependencies = pkg.devDependencies || {};
+    pkg.scripts = pkg.scripts || {};
 
     // Core dependency
     pkg.dependencies["@skalfa/skalfa-app-core"] = isDev ? "file:../skalfa-app-core" : "^1.0.0";
@@ -237,6 +251,50 @@ function customizeProject(target: string, opts: CustomizationOptions): void {
           .replace(/export \* from "\.\/document\/PrintTable\.component";\r?\n?/g, "")
           .replace(/export \* from "\.\/document\/RenderPDF\.component";\r?\n?/g, "");
         fs.writeFileSync(baseComponentsIndexPath, content, "utf8");
+      }
+    }
+
+    // D. PWA Option
+    if (opts.pwa) {
+      pkg.dependencies["@ducanh2912/next-pwa"] = "^10.2.9";
+      
+      // Wrap next.config.ts with withPWA
+      const nextConfigPath = path.join(target, "next.config.ts");
+      if (fs.existsSync(nextConfigPath)) {
+        let content = fs.readFileSync(nextConfigPath, "utf8");
+        if (!content.includes("@ducanh2912/next-pwa")) {
+          content = `import withPWAInit from "@ducanh2912/next-pwa";\n` + content;
+          content = content.replace(
+            /export default nextConfig;/,
+            `const withPWA = withPWAInit({\n  dest: "public",\n  disable: process.env.NODE_ENV === "development",\n});\n\nexport default withPWA(nextConfig);`
+          );
+          fs.writeFileSync(nextConfigPath, content, "utf8");
+        }
+      }
+    } else {
+      // Delete manifest.ts
+      const manifestPath = path.join(target, "app", "manifest.ts");
+      if (fs.existsSync(manifestPath)) {
+        fs.unlinkSync(manifestPath);
+      }
+    }
+
+    // E. Tauri Option
+    if (opts.tauriDesktop || opts.tauriMobile) {
+      pkg.dependencies["@tauri-apps/api"] = "^2.0.0";
+      pkg.devDependencies["@tauri-apps/cli"] = "^2.0.0";
+      pkg.devDependencies["cross-env"] = "^7.0.3";
+
+      pkg.scripts["tauri"] = "cross-env IS_TAURI=true tauri";
+      if (opts.tauriMobile) {
+        pkg.scripts["tauri:android"] = "cross-env IS_TAURI=true tauri android";
+        pkg.scripts["tauri:ios"] = "cross-env IS_TAURI=true tauri ios";
+      }
+    } else {
+      // Delete src-tauri folder
+      const tauriDir = path.join(target, "src-tauri");
+      if (fs.existsSync(tauriDir)) {
+        fs.rmSync(tauriDir, { recursive: true, force: true });
       }
     }
 
