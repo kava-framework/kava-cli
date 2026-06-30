@@ -8,7 +8,7 @@ import { addExtension, extensionNames } from "../commands/add-extension";
 import { createApi } from "../commands/create-api";
 import { createApp } from "../commands/create-app";
 import { initProject } from "../commands/init";
-import { pickUtility, UTILITIES } from "../commands/pick";
+import { pickUtility, pickComponent, UTILITIES } from "../commands/pick";
 import { updateCli } from "../commands/update";
 import { installAgent, updateAgent } from "../commands/agent";
 import { findProjectRoot } from "../utils/fs";
@@ -94,10 +94,20 @@ program
 
 program
   .command("pick")
-  .description("Eject/copy a core utility from @skalfa/skalfa-api-core into your local utils folder for customization.")
-  .argument("<utility>", `utility name: ${UTILITIES.join(", ")}`)
-  .action(async (utility: string) => {
-    await runCommand(() => pickUtility(utility));
+  .description("Eject/copy a core utility or component into your local project for customization.")
+  .argument("<name>", "utility or component name")
+  .argument("[newName]", "new name for the component (optional, component only)")
+  .action(async (name: string, newName?: string) => {
+    await runCommand(() => {
+      if (UTILITIES.includes(name)) {
+        if (newName) {
+          throw new Error("Renaming is only supported for components, not utilities.");
+        }
+        pickUtility(name);
+      } else {
+        pickComponent(name, newName);
+      }
+    });
   });
 
 program

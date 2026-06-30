@@ -46,6 +46,90 @@ export async function addExtension(extensionName: string): Promise<void> {
       installPackage(projectRoot, isDev ? "file:../skalfa-idb" : "@skalfa/skalfa-idb");
       addTsconfigPath(path.join(projectRoot, "tsconfig.json"), "@skalfa/skalfa-idb");
       addUtilExport(path.join(projectRoot, "utils", "index.ts"), "@skalfa/skalfa-idb");
+
+      // Scaffold IDBProvider
+      console.log("Scaffolding IDBProvider...");
+      const providerDir = path.join(projectRoot, "components", "base.components", "wrap");
+      if (!fs.existsSync(providerDir)) {
+        fs.mkdirSync(providerDir, { recursive: true });
+      }
+      const providerPath = path.join(providerDir, "IDBProvider.tsx");
+      const providerContent = `"use client"
+
+import { useEffect } from "react"
+import { idb } from "@skalfa/skalfa-idb"
+import { AppSchema } from "@schema"
+import { registry } from "@utils"
+
+export function IDBProvider({ children }: { children: React.ReactNode }) {
+  useEffect(() => {
+    idb.setDefaultSchema(AppSchema);
+    registry.register("idb", idb);
+  }, []);
+
+  return <>{children}</>
+}
+`;
+      fs.writeFileSync(providerPath, providerContent, "utf8");
+      console.log(`Created: ${providerPath}`);
+
+      // Scaffold app.schema.ts
+      console.log("Scaffolding AppSchema...");
+      const schemaDir = path.join(projectRoot, "schema", "idb");
+      if (!fs.existsSync(schemaDir)) {
+        fs.mkdirSync(schemaDir, { recursive: true });
+      }
+      const schemaPath = path.join(schemaDir, "app.schema.ts");
+      const schemaContent = `import { DBSchema } from "@skalfa/skalfa-idb"
+
+const name  =  String(process.env.NEXT_PUBLIC_APP_NAME || "").toLowerCase().trim().replace(/[^\\w\\s-]/g, "").replace(/[\\s_-]+/g, "-").replace(/^-+|-+$/g, "") + ".idb-app";
+
+export const AppSchema: DBSchema = {
+  name: name,
+  version: 1,
+  stores: {}
+}
+`;
+      fs.writeFileSync(schemaPath, schemaContent, "utf8");
+      console.log(`Created: ${schemaPath}`);
+
+      // Ensure schema/index.ts exists so the @schema alias works
+      const schemaIndexPath = path.join(projectRoot, "schema", "index.ts");
+      if (!fs.existsSync(schemaIndexPath)) {
+        fs.writeFileSync(schemaIndexPath, `export * from "./idb/app.schema";\n`, "utf8");
+        console.log(`Created: ${schemaIndexPath}`);
+      }
+
+      // Update app/layout.tsx
+      console.log("Updating app/layout.tsx...");
+      const layoutPath = path.join(projectRoot, "app", "layout.tsx");
+      if (fs.existsSync(layoutPath)) {
+        let layoutContent = fs.readFileSync(layoutPath, "utf8");
+        
+        // 1. Add IDBProvider to import
+        if (layoutContent.includes('import { ShortcutProvider } from "@components";')) {
+          layoutContent = layoutContent.replace(
+            'import { ShortcutProvider } from "@components";',
+            'import { IDBProvider, ShortcutProvider } from "@components";'
+          );
+        } else if (layoutContent.includes('import { ShortcutProvider } from "@components"')) {
+          layoutContent = layoutContent.replace(
+            'import { ShortcutProvider } from "@components"',
+            'import { IDBProvider, ShortcutProvider } from "@components"'
+          );
+        }
+        
+        // 2. Wrap {children} with <IDBProvider>
+        if (layoutContent.includes("{children}") && !layoutContent.includes("<IDBProvider>")) {
+          layoutContent = layoutContent.replace(
+            /\{\s*children\s*\}/,
+            `<IDBProvider>\n            {children}\n          </IDBProvider>`
+          );
+        }
+        
+        fs.writeFileSync(layoutPath, layoutContent, "utf8");
+        console.log(`Updated: ${layoutPath}`);
+      }
     } else if (extensionName === "socket") {
       console.log("Installing Skalfa Socket.io client extension...");
       installPackage(projectRoot, isDev ? "file:../skalfa-socket-client" : "@skalfa/skalfa-socket-client");
