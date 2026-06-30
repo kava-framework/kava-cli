@@ -179,6 +179,12 @@ Here is the list of features and their development status:
 | :--- | :--- | :---: |
 | **Login** | API Login | \\\`[x] Completed\\\` |
 
+## API Documentation
+The API documentation is automatically generated and updated in the \\\`./docs/\\\` folder. 
+
+To generate or update the documentation, run:
+\\\`bun skalfa generate:docs\\\`
+
 ## Development Setup
 
 ### Prerequisites
