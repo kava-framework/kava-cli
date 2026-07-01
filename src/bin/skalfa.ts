@@ -64,24 +64,27 @@ program
   .command("init")
   .description("Initialize a new Skalfa monorepo project containing both API and App.")
   .argument("[name]", "project folder name")
-  .action(async (name?: string) => {
-    await runCommand(() => initProject(name));
+  .option("-a, --auth <type>", "Authentication type: username or email")
+  .action(async (name?: string, options?: { auth?: string }) => {
+    await runCommand(() => initProject(name, options?.auth ? { authType: options.auth as any } : undefined));
   });
 
 program
   .command("create:api")
   .description("Create a new Skalfa API project.")
   .argument("<name>", "project folder and package name")
-  .action(async (name: string) => {
-    await runCommand(() => createApi(name));
+  .option("-a, --auth <type>", "Authentication type: username or email")
+  .action(async (name: string, options: { auth?: string }) => {
+    await runCommand(() => createApi(name, options.auth ? { authType: options.auth as any } : undefined));
   });
 
 program
   .command("create:app")
   .description("Create a new Skalfa App Next.js project.")
   .argument("<name>", "project folder and package name")
-  .action(async (name: string) => {
-    await runCommand(() => createApp(name));
+  .option("-a, --auth <type>", "Authentication type: username or email")
+  .action(async (name: string, options: { auth?: string }) => {
+    await runCommand(() => createApp(name, options.auth ? { authType: options.auth as any } : undefined));
   });
 
 program

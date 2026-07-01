@@ -46,6 +46,7 @@ export interface CreateAppOptions {
   pwa?: boolean;
   tauriDesktop?: boolean;
   tauriMobile?: boolean;
+  authType?: "username" | "email";
 }
 
 export async function createApp(projectName: string, options?: CreateAppOptions): Promise<void> {
@@ -65,11 +66,14 @@ export async function createApp(projectName: string, options?: CreateAppOptions)
   let hasPwa = options?.pwa ?? false;
   let hasTauriDesktop = options?.tauriDesktop ?? false;
   let hasTauriMobile = options?.tauriMobile ?? false;
+  let authType: "username" | "email" = options?.authType ?? "username";
 
   if (!options) {
     // Ask interactive questions sequentially
     const q = new Questioner();
     try {
+      const authChoice = (await q.ask("Choose authentication type (username/email) [default: username]: ", "username")).toLowerCase();
+      authType = authChoice === "email" ? "email" : "username";
       hasIdb = (await q.ask("Do you need IndexedDB (IDB)? (y/N): ", "No")).toLowerCase().startsWith("y");
       hasSocket = (await q.ask("Do you need Socket Client? (y/N): ", "No")).toLowerCase().startsWith("y");
       hasDocument = (await q.ask("Do you need Document Export/Viewer (PDF/Excel)? (y/N): ", "No")).toLowerCase().startsWith("y");
@@ -202,7 +206,8 @@ If you are an AI coding agent assisting with this project, please make sure to r
       document: hasDocument,
       pwa: hasPwa,
       tauriDesktop: hasTauriDesktop,
-      tauriMobile: hasTauriMobile
+      tauriMobile: hasTauriMobile,
+      authType: authType
     });
     
     spinner.update("Installing dependencies (this may take a moment)...");
@@ -236,12 +241,15 @@ interface CustomizationOptions {
   pwa: boolean;
   tauriDesktop: boolean;
   tauriMobile: boolean;
+  authType: "username" | "email";
 }
 
 function customizeProject(target: string, opts: CustomizationOptions): void {
   const packageJsonPath = path.join(target, "package.json");
   const baseComponentsIndexPath = path.join(target, "components", "base.components", "index.ts");
   const isDev = !!process.env[TEMPLATE_ENV_KEY];
+  const isMonorepo = path.basename(target) === "api" || path.basename(target) === "app";
+  const devPathPrefix = isMonorepo ? "file:../../" : "file:../";
 
   // 1. Update dependencies and scripts in package.json
   if (fs.existsSync(packageJsonPath)) {
@@ -251,11 +259,14 @@ function customizeProject(target: string, opts: CustomizationOptions): void {
     pkg.scripts = pkg.scripts || {};
 
     // Core dependency
-    pkg.dependencies["@skalfa/skalfa-app-core"] = isDev ? "file:../skalfa-app-core" : "^1.0.0";
+    pkg.dependencies["@skalfa/skalfa-app-core"] = isDev ? `${devPathPrefix}skalfa-app-core` : "^1.0.0";
+    if (isDev && pkg.dependencies["@skalfa/skalfa-component"]) {
+      pkg.dependencies["@skalfa/skalfa-component"] = `${devPathPrefix}skalfa-component`;
+    }
 
     // A. IndexedDB Option
     if (opts.idb) {
-      pkg.dependencies["@skalfa/skalfa-idb"] = isDev ? "file:../skalfa-idb" : "^1.0.0";
+      pkg.dependencies["@skalfa/skalfa-idb"] = isDev ? `${devPathPrefix}skalfa-idb` : "^1.0.0";
     } else {
       // Delete schema directory
       const schemaDir = path.join(target, "schema");
@@ -290,13 +301,13 @@ function customizeProject(target: string, opts: CustomizationOptions): void {
 
     // B. Socket Option
     if (opts.socket) {
-      pkg.dependencies["@skalfa/skalfa-socket-client"] = isDev ? "file:../skalfa-socket-client" : "^1.0.0";
+      pkg.dependencies["@skalfa/skalfa-socket-client"] = isDev ? `${devPathPrefix}skalfa-socket-client` : "^1.0.0";
       pkg.dependencies["socket.io-client"] = "^4.8.1";
     }
 
     // C. Document Option
     if (opts.document) {
-      pkg.dependencies["@skalfa/skalfa-document"] = isDev ? "file:../skalfa-document" : "^1.0.0";
+      pkg.dependencies["@skalfa/skalfa-document"] = isDev ? `${devPathPrefix}skalfa-document` : "^1.0.0";
       pkg.dependencies["exceljs"] = "^4.4.0";
       pkg.dependencies["pdf-lib"] = "^1.17.1";
       pkg.dependencies["pdfjs-dist"] = "^4.4.168";
@@ -371,5 +382,92 @@ function customizeProject(target: string, opts: CustomizationOptions): void {
     }
 
     fs.writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2), "utf8");
+  }
+
+  // 6. Handle authentication type customization
+  if (opts.authType === "username") {
+    // A. Modify app/auth/login/page.tsx
+    const loginPagePath = path.join(target, "app", "auth", "login", "page.tsx");
+    if (fs.existsSync(loginPagePath)) {
+      let content = fs.readFileSync(loginPagePath, "utf8");
+      
+      // Replace email field with username field
+      content = content.replace(
+        /\{\s*construction:\s*\{\s*name:\s*["']email["'],\s*label:\s*["']E-mail["'],\s*placeholder:\s*["']Ex:\s*example@mail\.com["'],\s*validations:\s*["']required\|min:10\|max:50\|email["']\s*\}\s*\}/g,
+        `{\n                construction: {\n                  name: "username",\n                  label: "Username",\n                  placeholder: "Ex: joko.gunawan",\n                  validations: "required|min:3|max:50"\n                }\n              }`
+      );
+      
+      // Remove Create Account link in login page
+      content = content.replace(
+        /<p className="mt-4 text-center">Don&apos;t have an account yet\? <Link href="\/auth\/register" className="text-primary underline">Create Account<\/Link><\/p>/g,
+        ''
+      );
+      
+      fs.writeFileSync(loginPagePath, content, "utf8");
+    }
+
+    // B. Modify app/auth/edit/page.tsx
+    const editPagePath = path.join(target, "app", "auth", "edit", "page.tsx");
+    if (fs.existsSync(editPagePath)) {
+      let content = fs.readFileSync(editPagePath, "utf8");
+      
+      // Replace email field with username field
+      content = content.replace(
+        /\{\s*construction:\s*\{\s*name:\s*["']email["'],\s*label:\s*["']E-mail["'],\s*placeholder:\s*["']Ex:\s*example@mail\.com["'],\s*\}\s*\}/g,
+        `{\n                construction: {\n                  name: "username",\n                  label: "Username",\n                  placeholder: "Ex: joko.gunawan",\n                }\n              }`
+      );
+      
+      fs.writeFileSync(editPagePath, content, "utf8");
+    }
+
+    // C. Modify app/auth/me/page.tsx
+    const mePagePath = path.join(target, "app", "auth", "me", "page.tsx");
+    if (fs.existsSync(mePagePath)) {
+      let content = fs.readFileSync(mePagePath, "utf8");
+      
+      // Replace email display with username
+      content = content.replace(
+        /<div>\s*<p className="text-xs font-semibold text-light-foreground">\s*Email\s*<\/p>\s*<p>\{user\?\.email\}<\/p>\s*<\/div>/g,
+        `<div>\n                <p className="text-xs font-semibold text-light-foreground">\n                  Username\n                </p>\n                <p>{user?.username}</p>\n              </div>`
+      );
+      
+      fs.writeFileSync(mePagePath, content, "utf8");
+    }
+
+    // D. Modify app/dashboard/user/page.tsx
+    const userPagePath = path.join(target, "app", "dashboard", "user", "page.tsx");
+    if (fs.existsSync(userPagePath)) {
+      let content = fs.readFileSync(userPagePath, "utf8");
+      
+      // Replace table column for email
+      content = content.replace(
+        /\{\s*selector:\s*["']email["'],\s*label:\s*["']Email["'],\s*sortable:\s*true,\s*width:\s*["']250px["'],\s*\}/g,
+        `{\n            selector: "username",\n            label: "Username",\n            sortable: true,\n            width: "250px",\n          }`
+      );
+      
+      // Replace detail panel for email
+      content = content.replace(
+        /\{\s*label:\s*["']Email["'],\s*item:\s*["']email["'],\s*\}/g,
+        `{\n            label: "Username",\n            item: "username",\n          }`
+      );
+      
+      // Replace form field for email
+      content = content.replace(
+        /\{\s*construction:\s*\{\s*name:\s*["']email["'],\s*label:\s*["']E-mail["'],\s*placeholder:\s*["']Ex:\s*example@mail\.com["'],\s*validations:\s*\[\s*["']required["']\s*\]\s*,\s*\}\s*,?\s*\}/g,
+        `{\n              construction: {\n                name: "username",\n                label: "Username",\n                placeholder: "Ex: joko.gunawan",\n                validations: ["required"],\n              },\n            }`
+      );
+      
+      fs.writeFileSync(userPagePath, content, "utf8");
+    }
+
+    // E. Delete app/auth/register and app/auth/verify folders (self-registration and verification disabled/removed)
+    const registerDir = path.join(target, "app", "auth", "register");
+    if (fs.existsSync(registerDir)) {
+      fs.rmSync(registerDir, { recursive: true, force: true });
+    }
+    const verifyDir = path.join(target, "app", "auth", "verify");
+    if (fs.existsSync(verifyDir)) {
+      fs.rmSync(verifyDir, { recursive: true, force: true });
+    }
   }
 }

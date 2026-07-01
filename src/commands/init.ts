@@ -29,7 +29,11 @@ class Questioner {
   }
 }
 
-export async function initProject(projectName?: string): Promise<void> {
+export interface InitOptions {
+  authType?: "username" | "email";
+}
+
+export async function initProject(projectName?: string, options?: InitOptions): Promise<void> {
   const cwd = process.cwd();
   const isCurrentDir = !projectName || projectName === ".";
   const target = isCurrentDir ? cwd : path.resolve(cwd, projectName);
@@ -66,7 +70,16 @@ export async function initProject(projectName?: string): Promise<void> {
   let appTauriDesktop = false;
   let appTauriMobile = false;
 
+  let authType: "username" | "email" = options?.authType ?? "username";
+  const shouldPromptAuth = !options || !options.authType;
+
   try {
+    if (shouldPromptAuth) {
+      console.log("\n--- Configure Authentication ---");
+      const authChoice = (await q.ask("Choose authentication type (username/email) [default: username]: ", "username")).toLowerCase();
+      authType = authChoice === "email" ? "email" : "username";
+    }
+
     console.log("\n--- Configure API (Backend) ---");
     apiRedis = (await q.ask("Do you need Redis? (y/N): ", "No")).toLowerCase().startsWith("y");
     apiQueue = (await q.ask("Do you need Queue? (y/N): ", "No")).toLowerCase().startsWith("y");
@@ -100,6 +113,7 @@ export async function initProject(projectName?: string): Promise<void> {
     cron: apiCron,
     da: apiDa,
     socket: apiSocket,
+    authType: authType,
   });
 
   console.log("\nCreating App...");
@@ -110,6 +124,7 @@ export async function initProject(projectName?: string): Promise<void> {
     pwa: appPwa,
     tauriDesktop: appTauriDesktop,
     tauriMobile: appTauriMobile,
+    authType: authType,
   });
 
   console.log("\nInstalling AI Agents...");

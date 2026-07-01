@@ -69,6 +69,35 @@ export async function installAgent(overrideType?: string, targetProjectDir: stri
         console.log(`Created initial record: ${file}`);
       }
     }
+
+    if (type === "app") {
+      // Detect auth type from page.tsx or similar
+      const loginPagePath = path.join(targetProjectDir, "app", "auth", "login", "page.tsx");
+      let isEmail = true;
+      if (fs.existsSync(loginPagePath)) {
+        const loginContent = fs.readFileSync(loginPagePath, "utf8");
+        isEmail = loginContent.includes("email");
+      }
+
+      const updateFeaturesFile = (filePath: string) => {
+        if (fs.existsSync(filePath)) {
+          let content = fs.readFileSync(filePath, "utf8");
+          if (isEmail) {
+            content = content
+              .replace(/\|\s*`admin`\s*\|/g, "| `admin@mail.com` |")
+              .replace(/\|\s*`user`\s*\|/g, "| `user@mail.com` |");
+          } else {
+            content = content
+              .replace(/\|\s*`admin`\s*\|/g, "| `admin` |")
+              .replace(/\|\s*`user`\s*\|/g, "| `user` |");
+          }
+          fs.writeFileSync(filePath, content, "utf8");
+        }
+      };
+
+      updateFeaturesFile(path.join(templatesDir, "features.md"));
+      updateFeaturesFile(path.join(recordsDir, "features.md"));
+    }
   }
 
   // 3. Add /.agents/ to project's .gitignore

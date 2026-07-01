@@ -46,6 +46,7 @@ export interface CreateApiOptions {
   cron?: boolean;
   da?: boolean;
   socket?: boolean;
+  authType?: "username" | "email";
 }
 
 export async function createApi(projectName: string, options?: CreateApiOptions): Promise<void> {
@@ -65,11 +66,14 @@ export async function createApi(projectName: string, options?: CreateApiOptions)
   let hasCron = options?.cron ?? false;
   let hasDa = options?.da ?? false;
   let hasSocket = options?.socket ?? false;
+  let authType: "username" | "email" = options?.authType ?? "username";
 
   if (!options) {
     // Ask interactive questions sequentially using a single readline interface
     const q = new Questioner();
     try {
+      const authChoice = (await q.ask("Choose authentication type (username/email) [default: username]: ", "username")).toLowerCase();
+      authType = authChoice === "email" ? "email" : "username";
       hasRedis = (await q.ask("Do you need Redis? (y/N): ", "No")).toLowerCase().startsWith("y");
       hasQueue = (await q.ask("Do you need Queue? (y/N): ", "No")).toLowerCase().startsWith("y");
       hasCache = (await q.ask("Do you need Cache? (y/N): ", "No")).toLowerCase().startsWith("y");
@@ -217,7 +221,8 @@ If you are an AI coding agent assisting with this project, please make sure to r
       cache: hasCache,
       cron: hasCron,
       da: hasDa,
-      socket: hasSocket
+      socket: hasSocket,
+      authType: authType
     });
     
     spinner.update("Installing dependencies (this may take a moment)...");
@@ -251,6 +256,7 @@ interface CustomizationOptions {
   cron: boolean;
   da: boolean;
   socket: boolean;
+  authType: "username" | "email";
 }
 
 function customizeProject(target: string, opts: CustomizationOptions): void {
@@ -266,37 +272,40 @@ function customizeProject(target: string, opts: CustomizationOptions): void {
     pkg.dependencies = pkg.dependencies || {};
     pkg.scripts = pkg.scripts || {};
 
+    const isMonorepo = path.basename(target) === "api" || path.basename(target) === "app";
+    const devPathPrefix = isMonorepo ? "file:../../" : "file:../";
+
     // Base ORM integration (always included)
-    pkg.dependencies["@skalfa/skalfa-orm"] = isDev ? "file:../skalfa-orm" : "^1.0.0";
+    pkg.dependencies["@skalfa/skalfa-orm"] = isDev ? `${devPathPrefix}skalfa-orm` : "^1.0.0";
     if (isDev) {
-      pkg.dependencies["@skalfa/skalfa-api-core"] = "file:../skalfa-api-core";
+      pkg.dependencies["@skalfa/skalfa-api-core"] = `${devPathPrefix}skalfa-api-core`;
     }
 
     const devCommands = ["bun run --watch app/app.ts", "bun skalfa watch:barrels"];
 
     if (opts.redis) {
-      pkg.dependencies["@skalfa/skalfa-redis"] = isDev ? "file:../skalfa-redis" : "^1.0.0";
+      pkg.dependencies["@skalfa/skalfa-redis"] = isDev ? `${devPathPrefix}skalfa-redis` : "^1.0.0";
       pkg.dependencies["ioredis"] = "^5.4.1";
     }
     if (opts.queue) {
-      pkg.dependencies["@skalfa/skalfa-queue"] = isDev ? "file:../skalfa-queue" : "^1.0.0";
+      pkg.dependencies["@skalfa/skalfa-queue"] = isDev ? `${devPathPrefix}skalfa-queue` : "^1.0.0";
       pkg.scripts["start:queue"] = "bun run app/jobs/queues/worker.queue.ts";
       devCommands.push("bun start:queue");
     }
     if (opts.cache) {
-      pkg.dependencies["@skalfa/skalfa-cache"] = isDev ? "file:../skalfa-cache" : "^1.0.0";
+      pkg.dependencies["@skalfa/skalfa-cache"] = isDev ? `${devPathPrefix}skalfa-cache` : "^1.0.0";
     }
     if (opts.cron) {
-      pkg.dependencies["@skalfa/skalfa-cron"] = isDev ? "file:../skalfa-cron" : "^1.0.0";
+      pkg.dependencies["@skalfa/skalfa-cron"] = isDev ? `${devPathPrefix}skalfa-cron` : "^1.0.0";
       pkg.scripts["start:cron"] = "bun run app/jobs/crons/worker.cron.ts";
       devCommands.push("bun start:cron");
     }
     if (opts.da) {
-      pkg.dependencies["@skalfa/skalfa-da"] = isDev ? "file:../skalfa-da" : "^1.0.0";
+      pkg.dependencies["@skalfa/skalfa-da"] = isDev ? `${devPathPrefix}skalfa-da` : "^1.0.0";
       pkg.dependencies["@clickhouse/client"] = "^1.6.0";
     }
     if (opts.socket) {
-      pkg.dependencies["@skalfa/skalfa-socket"] = isDev ? "file:../skalfa-socket" : "^1.0.0";
+      pkg.dependencies["@skalfa/skalfa-socket"] = isDev ? `${devPathPrefix}skalfa-socket` : "^1.0.0";
       pkg.dependencies["socket.io"] = "^4.7.5";
       pkg.scripts["start:socket"] = "bun run app/jobs/sockets/worker.socket.ts";
       devCommands.push("bun start:socket");
@@ -398,6 +407,119 @@ function customizeProject(target: string, opts: CustomizationOptions): void {
     }
 
     fs.writeFileSync(appTsPath, content, "utf8");
+  }
+
+  // 6. Handle authentication type customization
+  if (opts.authType === "username") {
+    // A. Modify migration: database/migrations/0000_00/users.ts
+    const migrationDir = path.join(target, "database", "migrations", "0000_00");
+    const migrationUsersPath = path.join(migrationDir, "users.ts");
+    if (fs.existsSync(migrationUsersPath)) {
+      let content = fs.readFileSync(migrationUsersPath, "utf8");
+      
+      // Replace table.string("email").unique().notNullable() with table.string("username").unique().notNullable()
+      content = content.replace(/table\.string\("email"\)\.unique\(\)\.notNullable\(\)/g, 'table.string("username").unique().notNullable()');
+      
+      // Remove table.timestamp("email_verification_at")
+      content = content.replace(/table\.timestamp\("email_verification_at"\)\r?\n?/g, '');
+      
+      // Delete the user_mail_tokens table schema creation
+      content = content.replace(/await\s+knex\.schema\.createTable\("user_mail_tokens",\s*\((table|t)\)\s*=>\s*\{[\s\S]*?\}\)\r?\n?/g, '');
+      
+      fs.writeFileSync(migrationUsersPath, content, "utf8");
+    }
+
+    // B. Modify model: app/models/iam/user.model.ts
+    const userModelPath = path.join(target, "app", "models", "iam", "user.model.ts");
+    if (fs.existsSync(userModelPath)) {
+      let content = fs.readFileSync(userModelPath, "utf8");
+      
+      // Replace email field with username field
+      content = content.replace(/@Field\(\s*\[\s*"fillable"\s*,\s*"selectable"\s*,\s*"searchable"\s*\]\s*\)\s*\r?\n?\s*email!:\s*string/g, '@Field(["fillable", "selectable", "searchable"])\n    username!: string');
+      
+      // Remove email_verification_at field
+      content = content.replace(/@Field\(\s*\[\s*"fillable"\s*,\s*"selectable"\s*,\s*"searchable"\s*\]\s*\)\s*\r?\n?\s*email_verification_at!:\s*Date/g, '');
+      
+      fs.writeFileSync(userModelPath, content, "utf8");
+    }
+
+    // C. Modify controller: app/controllers/iam/auth.controller.ts
+    const authControllerPath = path.join(target, "app", "controllers", "iam", "auth.controller.ts");
+    if (fs.existsSync(authControllerPath)) {
+      let content = fs.readFileSync(authControllerPath, "utf8");
+      
+      // Remove import { UserMailToken } from "app/outputs/mails";
+      content = content.replace(/import\s*\{\s*UserMailToken\s*\}\s*from\s*["']app\/outputs\/mails["'];?\r?\n?/g, '');
+      
+      // Update validation and logic in login
+      content = content.replace(/email\s*:\s*["']required["'],/g, 'username     :  "required",');
+      content = content.replace(/const\s*\{\s*email\s*,\s*password\s*\}\s*=\s*c\.body/g, 'const { username, password } = c.body');
+      content = content.replace(/const user\s*=\s*await\s*User\.query\(\)\.where\("email",\s*email\)\.whereNotNull\("email_verification_at"\)\.first\(\);/g, 'const user = await User.query().where("username", username).first();');
+      content = content.replace(/if\s*\(!user\)\s*return\s*c\.responseErrorValidation\(\{\s*email\s*:\s*\[\s*["']E-mail not found!["']\s*\]\s*\}\)/g, 'if (!user) return c.responseErrorValidation({username: ["Username not found!"]})');
+      
+      // Remove register and verify methods
+      content = content.replace(/\/\/\s*=+\s*>\s*\/\/\s*## Register new account\.[\s\S]*?(?=\/\/\s*=+\s*>\s*\/\/\s*## Get logged account)/g, '');
+      
+      // Replace update method validation: email: "required" -> username: "required"
+      content = content.replace(/email\s*:\s*["']required["'],/g, 'username  :  "required",');
+      
+      fs.writeFileSync(authControllerPath, content, "utf8");
+    }
+
+    // D. Modify router: app/routes/base.routes.ts
+    const baseRoutesPath = path.join(target, "app", "routes", "base.routes.ts");
+    if (fs.existsSync(baseRoutesPath)) {
+      let content = fs.readFileSync(baseRoutesPath, "utf8");
+      // Comment out register and verify routes
+      content = content.replace(/route\.post\('\/register',\s*AuthController\.register\)/g, '// route.post(\'/register\', AuthController.register) - disabled in username auth');
+      content = content.replace(/route\.post\('\/verify',\s*AuthController\.verify\)/g, '// route.post(\'/verify\', AuthController.verify) - disabled in username auth');
+      fs.writeFileSync(baseRoutesPath, content, "utf8");
+    }
+
+    // E. Modify controller: app/controllers/iam/user.controller.ts
+    const userControllerPath = path.join(target, "app", "controllers", "iam", "user.controller.ts");
+    if (fs.existsSync(userControllerPath)) {
+      let content = fs.readFileSync(userControllerPath, "utf8");
+      // Replace validation in store: email : ["required", "email"], -> username : ["required"],
+      content = content.replace(/email\s*:\s*\[\s*["']required["']\s*,\s*["']email["']\s*\]/g, 'username : ["required"]');
+      // Replace validation in update: email  :  "required", -> username  :  "required",
+      content = content.replace(/email\s*:\s*["']required["']/g, 'username  :  "required"');
+      fs.writeFileSync(userControllerPath, content, "utf8");
+    }
+
+    // F. Modify seeder: database/seeders/user.seeder.ts
+    const userSeederPath = path.join(target, "database", "seeders", "user.seeder.ts");
+    if (fs.existsSync(userSeederPath)) {
+      let content = fs.readFileSync(userSeederPath, "utf8");
+      
+      // Seed roles: Admin and User
+      content = content.replace(/\{"name": "Petugas"\}/g, '{"name": "User"}');
+      
+      // Seed users with username instead of email
+      content = content.replace(/\{"name": "Admin", "email": "admin@skalfa.id",/g, '{"name": "Admin", "username": "admin",');
+      content = content.replace(/\{"name": "Petugas", "email": "petugas@skalfa.id",/g, '{"name": "User", "username": "user",');
+      
+      fs.writeFileSync(userSeederPath, content, "utf8");
+    }
+
+    // G. Delete app/outputs/mails folder
+    const mailsDir = path.join(target, "app", "outputs", "mails");
+    if (fs.existsSync(mailsDir)) {
+      fs.rmSync(mailsDir, { recursive: true, force: true });
+    }
+  } else {
+    // If authType === "email":
+    // Change seeder from petugas@skalfa.id to user@mail.com and admin@skalfa.id to admin@mail.com, role Petugas to User
+    const userSeederPath = path.join(target, "database", "seeders", "user.seeder.ts");
+    if (fs.existsSync(userSeederPath)) {
+      let content = fs.readFileSync(userSeederPath, "utf8");
+      content = content.replace(/\{"name": "Petugas"\}/g, '{"name": "User"}');
+      content = content.replace(/admin@skalfa.id/g, 'admin@mail.com');
+      content = content.replace(/\{"name": "Petugas", "email": "petugas@mail.com",/g, '{"name": "User", "email": "user@mail.com",');
+      content = content.replace(/\{"name": "Petugas", "email": "petugas@skalfa.id",/g, '{"name": "User", "email": "user@mail.com",');
+      content = content.replace(/petugas@skalfa.id/g, 'user@mail.com');
+      fs.writeFileSync(userSeederPath, content, "utf8");
+    }
   }
 }
 
